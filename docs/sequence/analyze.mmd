@@ -1,0 +1,38 @@
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端 (Next.js)
+    participant GW as gateway (Go)
+    participant AI as ai (Python)
+    participant DS as DashScope 千问
+    participant DB as PostgreSQL
+    participant RD as Redis
+    participant HUB as feed.Hub
+
+    FE->>GW: POST /api/v1/analyze (jwt)
+    GW->>GW: Auth → RBAC → Tenant
+    GW->>RD: 查热点黑名单缓存
+    RD-->>GW: miss
+    GW->>AI: POST /v1/analyze
+
+    par 三路并发
+        AI->>AI: trace (号段对比)
+    and
+        AI->>AI: voiceprint (ONNX)
+    and
+        AI->>DS: classify (千问 LLM)
+        DS-->>AI: 5 类标签 + 置信度
+    end
+
+    AI->>AI: merge(7:3) → SAFE/WATCH/ALERT/BLOCK
+    AI-->>GW: Verdict (json)
+
+    par 异步写
+        GW->>DB: INSERT call_logs
+    and
+        GW->>HUB: Publish(feed.Event)
+    end
+    GW-->>FE: 200 OK + Verdict
+
+    HUB-->>FE: SSE event: feed (warroom 实时)
+```

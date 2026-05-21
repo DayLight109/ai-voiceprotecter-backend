@@ -1,0 +1,43 @@
+# Env
+.env
+.env.local
+.env.*.local
+
+# Go
+gateway/bin/
+*.test
+*.out
+gateway/coverage.html
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# AI 模型文件（太大，放 MinIO 或单独管理）
+ai/models/*.onnx
+ai/models/*.pt
+ai/models/*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+deploy/data/
+
+# Logs
+*.log
+logs/

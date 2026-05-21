@@ -1,0 +1,48 @@
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 用户
+    participant FE as 前端 /login
+    participant GW as gateway
+    participant DB as users / sessions
+    participant RD as Redis (黑名单)
+    participant POL as 公安接口
+
+    U->>FE: 输入手机号 + 密码
+    FE->>GW: POST /auth/login
+
+    GW->>DB: GetUserByPhone
+    DB-->>GW: user (含 password_hash)
+    GW->>GW: bcrypt.Verify → 通过
+    GW->>GW: auth.Issue(JWT 双 token)
+    GW->>DB: INSERT sessions (refresh hash)
+    GW->>DB: TouchUserLogin
+    GW-->>FE: 200 {accessToken, refreshToken, user}
+
+    Note over FE,GW: 后续请求带 Authorization: Bearer <access>
+
+    alt 高危操作（如修改风控等级）
+        FE->>GW: PUT /risk-level/state
+        GW->>GW: Auth middleware 验签
+        GW->>RD: 查 jti 是否被吊销
+        RD-->>GW: not revoked
+        GW->>GW: RBAC RequireRole("family_admin")
+        GW-->>FE: 200
+    end
+
+    alt access 过期
+        FE->>GW: any request
+        GW-->>FE: 401 AUTH_TOKEN_EXPIRED
+        FE->>GW: POST /auth/refresh (refreshToken)
+        GW->>DB: 校验 sessions.revoked = false
+        GW-->>FE: 200 {new access}
+    end
+
+    alt 注销
+        U->>FE: 点退出
+        FE->>GW: POST /auth/logout
+        GW->>DB: UPDATE sessions SET revoked = true
+        GW->>RD: SADD jwt:revoked <jti> EX <ttl>
+        GW-->>FE: 200
+    end
+```

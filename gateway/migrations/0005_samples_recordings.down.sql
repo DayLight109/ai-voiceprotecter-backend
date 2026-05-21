@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS call_logs;
+DROP TABLE IF EXISTS recording_policy;
+DROP TABLE IF EXISTS recordings;
+DROP TABLE IF EXISTS samples;

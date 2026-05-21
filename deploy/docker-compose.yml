@@ -1,0 +1,128 @@
+name: sentinel-server
+
+services:
+  # ─────────────────────────── Gateway (Go) ────────────────────────────
+  gateway:
+    build:
+      context: ../gateway
+      dockerfile: Dockerfile
+    container_name: sentinel-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file: ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      ai:
+        condition: service_started
+    networks: [sentinel]
+
+  # ─────────────────────────── AI (Python) ─────────────────────────────
+  ai:
+    build:
+      context: ../ai
+      dockerfile: Dockerfile
+    container_name: sentinel-ai
+    restart: unless-stopped
+    ports:
+      - "8090:8090"        # 仅开发期暴露；生产应仅在内网开放
+    env_file: ../.env
+    volumes:
+      - ../ai/models:/app/models:ro
+    networks: [sentinel]
+
+  # ─────────────────────────── PostgreSQL ──────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: sentinel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [sentinel]
+
+  # ─────────────────────────── Redis ───────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: sentinel-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks: [sentinel]
+
+  # ─────────────────────────── MinIO ───────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: sentinel-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    networks: [sentinel]
+
+  # 一次性任务：建桶
+  minio-init:
+    image: minio/mc:latest
+    container_name: sentinel-minio-init
+    depends_on: [minio]
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        sleep 3
+        mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY}
+        mc mb --ignore-existing local/${MINIO_BUCKET_RECORDINGS}
+        mc mb --ignore-existing local/${MINIO_BUCKET_MODELS}
+        mc mb --ignore-existing local/${MINIO_BUCKET_CREDENTIALS}
+        echo "✓ buckets created"
+    env_file: ../.env
+    networks: [sentinel]
+    restart: "no"
+
+  # ─────────────────────────── Migrate ─────────────────────────────────
+  migrate:
+    image: migrate/migrate:v4.17.1
+    container_name: sentinel-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../gateway/migrations:/migrations:ro
+    entrypoint:
+      ["migrate","-path","/migrations","-database","${DATABASE_URL}"]
+    command: ["up"]
+    networks: [sentinel]
+    restart: "no"
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+
+networks:
+  sentinel:
+    driver: bridge

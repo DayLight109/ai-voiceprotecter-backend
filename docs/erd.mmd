@@ -1,0 +1,139 @@
+```mermaid
+erDiagram
+    tenants ||--o{ users : has
+    tenants ||--o{ blacklist : has
+    tenants ||--o{ whitelist : has
+    tenants ||--o{ recordings : has
+    tenants ||--o{ call_logs : has
+    tenants ||--o{ risk_level_rules : has
+    tenants ||--|| risk_level_state : has
+    tenants ||--o{ devices : has
+
+    users ||--o{ identity_credentials : has
+    users ||--o{ sessions : has
+    users ||--o{ appeals : files
+    users ||--o{ admin_applications : applies
+    users ||--o{ permissions : has
+
+    samples }o..|| call_logs : "from"
+    voice_models ||..|| voice_samples : "trained-with"
+
+    tenants {
+      text id PK
+      text kind  "family|enterprise|global"
+      text name
+    }
+    users {
+      text id PK
+      text tenant_id FK
+      text name
+      text phone "UNIQUE"
+      text password_hash
+      text role
+      text status
+    }
+    blacklist {
+      text id PK
+      text tenant_id FK "nullable=global"
+      text number
+      text category
+      int  risk
+    }
+    whitelist {
+      text id PK
+      text tenant_id FK
+      text number
+      text name
+      text relation
+    }
+    knowledge_articles {
+      text id PK
+      text title
+      text category
+      bigint views
+    }
+    scam_rules {
+      text id PK
+      text category
+      text keyword
+      int  weight
+      bool enabled
+    }
+    risk_level_state {
+      text tenant_id PK
+      int  active_level
+    }
+    risk_level_rules {
+      text id PK
+      text tenant_id FK
+      int  level "1-5"
+      text keyword
+      int  weight
+    }
+    samples {
+      text id PK
+      text call_id
+      text classification
+      text status
+    }
+    recordings {
+      text id PK
+      text tenant_id FK
+      text owner_user_id FK
+      text object_key
+      text verdict
+    }
+    call_logs {
+      text id PK
+      text tenant_id FK
+      text phone
+      text verdict
+      int  risk_score
+      jsonb trace_json
+    }
+    voice_models {
+      text id PK
+      text version "UNIQUE"
+      numeric accuracy
+      bool active
+    }
+    voice_samples {
+      text id PK
+      text name
+      text tag "synth|human"
+    }
+    agent_config {
+      text key PK "display_words|whisper|qwen"
+      jsonb value
+    }
+    devices {
+      text id PK
+      text tenant_id FK
+      text type "enterprise|family"
+      text status
+    }
+    audit_logs {
+      bigserial id PK
+      timestamptz ts
+      text actor_id FK
+      text action
+      text result
+    }
+    appeals {
+      text id PK
+      text user_id FK
+      text type
+      text status
+    }
+    admin_applications {
+      text id PK
+      text user_id FK
+      text scope
+      text status
+    }
+    permissions {
+      text user_id PK,FK
+      text key PK
+      bool enabled
+    }
+```

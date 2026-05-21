@@ -1,0 +1,17 @@
+[project]
+name = "sentinel-ai"
+version = "0.1.0"
+description = "Sentinel · AI inference service (Whisper + ONNX + Qwen)"
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,240 @@
+openapi: 3.0.3
+info:
+  title: Sentinel Gateway API
+  version: 0.1.0
+  description: |
+    声纹捕手后端网关 · 5 角色全模块 API。
+    Base URL: `/api/v1`。鉴权：除 /auth/login、/auth/register、/health 外都要 Bearer JWT。
+servers:
+  - url: http://localhost:8080/api/v1
+    description: 本地开发
+  - url: https://api.sentinel.example/api/v1
+    description: 生产
+
+# 完整版接口见 API.md
+# 这里仅列出最常用的几个端点契约，方便前端生成 client
+
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      security: []
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+
+  /auth/login:
+    post:
+      summary: 登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account, password]
+              properties:
+                account: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken: { type: string }
+                          refreshToken: { type: string }
+                          user: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/AuthError"
+
+  /analyze:
+    post:
+      summary: 三层引擎判决
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnalyzeRequest" }
+      responses:
+        "200":
+          description: 判决结果
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyzeResponse" }
+
+  /blacklist:
+    get:
+      summary: 黑名单列表
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        "200":
+          description: 列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/BlacklistEntry" }
+    post:
+      summary: 新增黑名单
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BlacklistEntry" }
+      responses:
+        "200":
+          description: 已创建
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /feed/stream:
+    get:
+      summary: 实时事件流 (SSE)
+      description: |
+        返回 `text/event-stream`，每条事件格式：
+        ```
+        event: feed
+        data: {"id": "...", "verb": "BLOCK", "ts": "...", ...}
+        ```
+        前端用 EventSource 直连即可。
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream: {}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  security:
+    - bearerAuth: []
+  schemas:
+    Envelope:
+      type: object
+      properties:
+        data: {}
+        meta:
+          type: object
+          properties:
+            page:     { type: integer }
+            pageSize: { type: integer }
+            total:    { type: integer }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:    { type: string }
+            message: { type: string }
+            field:   { type: string }
+    User:
+      type: object
+      properties:
+        id:       { type: string }
+        name:     { type: string }
+        role:
+          type: string
+          enum: [family, biz, family_admin, admin, sysadmin]
+        tenantId: { type: string }
+    BlacklistEntry:
+      type: object
+      properties:
+        id:       { type: string }
+        number:   { type: string }
+        reason:   { type: string }
+        category:
+          type: string
+          enum: [AI合成, 话术诈骗, 号码伪冒, 其他]
+        risk:     { type: integer, minimum: 0, maximum: 100 }
+        source:
+          type: string
+          enum: [本地, 云端, 手动]
+        createdAt: { type: string, format: date-time }
+    AnalyzeRequest:
+      type: object
+      required: [shownNumber]
+      properties:
+        callId:         { type: string }
+        shownNumber:    { type: string }
+        signalOriginCC: { type: string }
+        audioSeconds:   { type: number }
+        transcriptHint: { type: string }
+    AnalyzeResponse:
+      type: object
+      properties:
+        callId:        { type: string }
+        ts:            { type: string, format: date-time }
+        riskScore:     { type: integer }
+        riskLevel:
+          type: string
+          enum: [SAFE, WATCH, ALERT, BLOCK]
+        action:
+          type: string
+          enum: [pass, alert, block]
+        latencyMillis: { type: integer }
+        trace:
+          type: object
+          properties:
+            shownRegistry: { type: string }
+            actualOrigin:  { type: string }
+            mismatch:      { type: boolean }
+            risk:          { type: integer }
+        voiceprint:
+          type: object
+          properties:
+            synthProbability: { type: number }
+            verdict:
+              type: string
+              enum: [HUMAN, SUSPECT, SYNTH]
+            risk: { type: integer }
+        script:
+          type: object
+          properties:
+            hits:
+              type: array
+              items:
+                type: object
+                properties:
+                  category: { type: string }
+                  phrase:   { type: string }
+                  weight:   { type: integer }
+            risk: { type: integer }
+  responses:
+    AuthError:
+      description: 鉴权错误
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
