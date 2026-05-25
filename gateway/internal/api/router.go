@@ -76,6 +76,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/me", handlers.Me(hd))
 			r.Mount("/me/credentials", handlers.IdentityRouter(hd))
 			r.Mount("/me/identity-modes", handlers.IdentityModesRouter(hd))
+			r.Mount("/me/emergency-contacts", handlers.EmergencyContactsRouter(hd))
 
 			r.Post("/analyze", handlers.Analyze(hd))
 

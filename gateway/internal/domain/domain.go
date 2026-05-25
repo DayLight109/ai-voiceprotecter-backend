@@ -188,6 +188,15 @@ type Appeal struct {
 	ResolvedAt *time.Time `json:"resolvedAt,omitempty"`
 }
 
+type EmergencyContact struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"userId"`
+	Name      string    `json:"name"`
+	Phone     string    `json:"phone"`
+	Relation  string    `json:"relation"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type AdminApplication struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"userId"`
