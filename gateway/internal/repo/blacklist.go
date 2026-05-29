@@ -117,20 +117,25 @@ func (r *Repo) CreateBlacklist(ctx context.Context, p CreateBlacklistParams) (do
 	return e, translateErr(err)
 }
 
-func (r *Repo) UpdateBlacklist(ctx context.Context, id, number, reason, category string, risk int) (domain.BlacklistEntry, error) {
+func (r *Repo) UpdateBlacklist(ctx context.Context, id, tenantID, role, number, reason, category string, risk int) (domain.BlacklistEntry, error) {
+	// 授权收口：仅本租户条目可改；全局条目 (tenant_id IS NULL) 只命中 sysadmin 分支。
+	// 越权 / 不存在统一走 ErrNoRows → ErrNotFound（404），不泄漏条目存在性。
 	row := r.pool.QueryRow(ctx, `
-		UPDATE blacklist SET number=$2, reason=NULLIF($3,''), category=$4, risk=$5
-		WHERE id=$1 RETURNING `+blacklistColumns,
-		id, number, reason, category, risk,
+		UPDATE blacklist SET number=$4, reason=NULLIF($5,''), category=$6, risk=$7
+		WHERE id=$1 AND (tenant_id = $2 OR $3 = 'sysadmin')
+		RETURNING `+blacklistColumns,
+		id, tenantID, role, number, reason, category, risk,
 	)
 	e, err := scanBlacklist(row)
 	return e, translateErr(err)
 }
 
 func (r *Repo) DeleteBlacklist(ctx context.Context, id, tenantID, role string) error {
+	// 全局条目 (tenant_id IS NULL) 只能由 sysadmin 删除。
+	// 不可写 `OR tenant_id IS NULL`，否则任意租户用户都能删除全局黑名单（与 queries/blacklist.sql 对齐）。
 	tag, err := r.pool.Exec(ctx, `
 		DELETE FROM blacklist
-		WHERE id = $1 AND (tenant_id = $2 OR $3 = 'sysadmin' OR tenant_id IS NULL)`,
+		WHERE id = $1 AND (tenant_id = $2 OR $3 = 'sysadmin')`,
 		id, tenantID, role,
 	)
 	if err != nil {

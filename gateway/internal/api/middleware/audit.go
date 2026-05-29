@@ -81,3 +81,16 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+// Flush 透传底层 ResponseWriter 的 Flush。
+// 不实现它，SSE handler 的 w.(http.Flusher) 断言会失败 → /feed/stream 恒 500。
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap 暴露底层 writer，使 http.ResponseController 能穿透本包装器。
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}

@@ -27,8 +27,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: UpdateBlacklist :one
-UPDATE blacklist SET number=$2, reason=$3, category=$4, risk=$5
-WHERE id=$1
+-- 授权收口：仅本租户条目可改；全局条目 (tenant_id IS NULL) 只命中 sysadmin。
+UPDATE blacklist SET number=$4, reason=NULLIF($5,''), category=$6, risk=$7
+WHERE id=$1 AND (tenant_id = $2 OR $3::text = 'sysadmin')
 RETURNING *;
 
 -- name: DeleteBlacklist :exec

@@ -141,7 +141,7 @@ func heartbeatDevice(d Deps) http.HandlerFunc {
 func devicesAudit(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := parsePage(r)
-		rows, total, err := d.Repo.ListAuditLogs(r.Context(), "", p)
+		rows, total, err := d.Repo.ListAuditLogs(r.Context(), repo.AuditFilter{}, p)
 		if err != nil {
 			internalErr(w)
 			return

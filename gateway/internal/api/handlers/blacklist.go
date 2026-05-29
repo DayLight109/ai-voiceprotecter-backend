@@ -130,7 +130,10 @@ func updateBlacklist(d Deps) http.HandlerFunc {
 			badRequest(w, "VALIDATION_FAILED", "请求体无法解析")
 			return
 		}
-		entry, err := d.Repo.UpdateBlacklist(r.Context(), id, req.Number, req.Reason, req.Category, req.Risk)
+		// 授权：按租户 + 角色收口，防止越权改写其它租户或全局黑名单条目。
+		tenantID, _ := r.Context().Value(middleware.CtxTenantID).(string)
+		role, _ := r.Context().Value(middleware.CtxRole).(string)
+		entry, err := d.Repo.UpdateBlacklist(r.Context(), id, tenantID, role, req.Number, req.Reason, req.Category, req.Risk)
 		if err != nil {
 			if errors.Is(err, repo.ErrNotFound) {
 				notFoundErr(w)
