@@ -1,92 +1,46 @@
-# SENTINEL Server · 声纹捕手后端
+# Gateway · Sentinel Go API
 
-> Go 网关 + Python AI 子服务，为 [声纹捕手](../声纹捕手) 前端提供完整的反诈 API。
+Go 1.22 + chi v5 网关，负责鉴权、CRUD、SSE、对象存储签名。
 
-## 服务拓扑
-
-```
-Next.js 前端
-      ↓ /api/v1/*
-┌──────────────────────────────────────┐
-│ gateway · Go 1.22 + chi  (:8080)     │   ← 鉴权 / CRUD / SSE / 文件
-└──────┬────────────┬──────────────┬───┘
-       │ pgx        │ redis        │ HTTP
-       ▼            ▼              ▼
-   PostgreSQL    Redis        ai · Python (:8090)
-       │                          │ ← Whisper / ONNX / 千问
-       ▼                          ▼
-   持久化数据                    模型推理
-                              ↓
-                            MinIO 对象存储
-```
-
-## 一键启动
+## 本地开发
 
 ```bash
-cp .env.example .env
-docker compose -f deploy/docker-compose.yml up -d
-make migrate       # 跑数据库迁移
-make seed          # 仅注入 1 个 global 租户 + 1 个 sysadmin（无演示数据）
+# 1. 启依赖（pg/redis/minio）
+docker compose -f ../deploy/docker-compose.yml up -d postgres redis minio minio-init
+
+# 2. 跑迁移
+docker compose -f ../deploy/docker-compose.yml run --rm migrate up
+
+# 3. 本地运行 gateway（热重启用 air）
+go run ./cmd/server -addr=:8080
 ```
 
-骨架阶段所有业务表为空，list 端点返回空集合；非 list 端点返回 `501 NOT_IMPLEMENTED` —— 等待 P1 业务层实现。
-
-启动后：
-- gateway → http://localhost:8080
-- ai      → http://localhost:8090
-- minio   → http://localhost:9001  (用户 / 密码见 .env)
-- pg      → localhost:5432
-
-## 健康检查
-
-```bash
-curl http://localhost:8080/api/v1/health
-curl http://localhost:8090/healthz
-```
-
-## 目录速览
+## 目录
 
 ```
-sentinel-server/
-├── gateway/        Go 网关：业务 CRUD + 鉴权 + SSE
-├── ai/             Python AI：Whisper + ONNX + 千问
-├── deploy/         docker-compose / init.sql / nginx
-├── docs/           openapi.yaml / ER 图 / 时序图
-├── ARCHITECTURE.md 详细架构
-├── API.md          全部接口
-├── DATABASE.md     表结构
-└── Makefile        常用命令
+gateway/
+├── cmd/server/main.go        入口
+├── internal/
+│   ├── config/               envconfig
+│   ├── api/
+│   │   ├── router.go         总路由
+│   │   ├── middleware/       中间件链
+│   │   └── handlers/         一个文件一个资源
+│   ├── auth/                 JWT + bcrypt
+│   ├── service/              业务逻辑
+│   ├── repo/                 sqlc 生成
+│   ├── domain/               实体
+│   ├── aiclient/             调 AI 服务
+│   ├── feed/                 SSE pub/sub
+│   ├── store/                Redis 适配
+│   └── storage/              MinIO 封装
+├── migrations/               golang-migrate
+└── seed/                     测试种子
 ```
 
-## 文档导航
+## 代码风格
 
-| 文件 | 内容 |
-|---|---|
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | 服务拓扑、职责切分、数据流、关键决策 |
-| [API.md](./API.md) | 全部 REST 端点（按模块） |
-| [DATABASE.md](./DATABASE.md) | 数据库表结构 + 关系 |
-| [docs/openapi.yaml](./docs/openapi.yaml) | OpenAPI 契约（前端可生成 client） |
-| [gateway/README.md](./gateway/README.md) | Go 网关开发指南 |
-| [ai/README.md](./ai/README.md) | Python AI 开发指南 |
-
-## 与前端对接
-
-在 `声纹捕手/.env.local` 写：
-
-```
-NEXT_PUBLIC_API_URL=http://localhost:8080
-```
-
-重启 `next dev`，前端 `useFeed` / `fetch` 会自动指向本服务。
-
-## 分阶段路线
-
-- **P0 · 骨架（当前）** — 目录 / 容器 / 路由 / 中间件 / 数据库 schema 到位；handler 返回空集合或 501，AI 缺模型返 503，无任何 mock 数据
-- P1 — 鉴权 + 黑/白名单完整 CRUD
-- P2 — 知识库 + 规则库 + 风控等级
-- P3 — Whisper / ONNX / 千问真实推理
-- P4 — 录音上传 / 样本审核 / 审计 / 设备管理
-
-## License
-
-内部演示用，不对外提供商业服务。
+- handler 文件命名：资源单数（`blacklist.go`），用 chi 子路由组装
+- 所有 handler 收 `Deps` 结构，依赖通过构造注入，方便测试
+- sqlc 生成代码不手改；改 SQL 后 `make gateway-sqlc`
+- 错误返回包：`apperr.Error{Code, Message, HTTP}` → 中间件统一 JSON
