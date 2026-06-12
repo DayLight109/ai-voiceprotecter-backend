@@ -4,8 +4,10 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -16,6 +18,7 @@ import (
 	"github.com/sentinel/gateway/internal/api/middleware"
 	"github.com/sentinel/gateway/internal/config"
 	"github.com/sentinel/gateway/internal/feed"
+	"github.com/sentinel/gateway/internal/ops"
 	"github.com/sentinel/gateway/internal/repo"
 	"github.com/sentinel/gateway/internal/storage"
 	"github.com/sentinel/gateway/internal/store"
@@ -32,6 +35,7 @@ type Deps struct {
 	Store   *store.Store
 	AI      *aiclient.Client
 	Storage *storage.MinIO
+	Ops     *ops.Sampler
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -61,7 +65,11 @@ func NewRouter(d Deps) http.Handler {
 		Store:   d.Store,
 		AI:      d.AI,
 		Storage: d.Storage,
+		Ops:     d.Ops,
 	}
+
+	// ── 运维监测 (无鉴权；仅聚合指标，不含业务数据) ──────
+	r.Mount("/api/v1/ops", handlers.OpsRouter(hd))
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// 公开端点（登录 / 注册 / refresh / logout —— 各自内部按需挂限流）
@@ -69,11 +77,31 @@ func NewRouter(d Deps) http.Handler {
 
 		// 需要鉴权 ─────────────────────────────────────
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Auth(d.Cfg.JWT, d.Redis))
+			// 会话活跃打点：Auth 验签成功后异步落 sessions.last_seen_at（中间件内已节流）
+			touch := func(sid string) {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					if err := d.Repo.TouchSessionLastSeen(ctx, sid); err != nil {
+						d.Logger.Warn("touch session failed", "err", err)
+					}
+				}()
+			}
+			r.Use(middleware.Auth(d.Cfg.JWT, d.Redis, touch))
 			r.Use(middleware.Tenant)
 			r.Use(middleware.Audit(d.Logger, d.DB))
 
 			r.Get("/me", handlers.Me(hd))
+			r.Get("/me/", handlers.Me(hd)) // 前端 me() 调带尾斜杠的 /me/
+			r.Put("/me", handlers.UpdateMe(hd))
+			r.Put("/me/", handlers.UpdateMe(hd))
+			r.Put("/me/password", handlers.ChangePassword(hd))
+			r.Get("/me/sessions", handlers.ListSessions(hd))
+			r.Delete("/me/sessions/others", handlers.RevokeOtherSessions(hd))
+			r.Delete("/me/sessions/{token}", handlers.RevokeSession(hd))
+			r.Put("/me/avatar", handlers.UploadAvatar(hd))
+			r.Get("/me/avatar", handlers.GetAvatar(hd))
+			r.Delete("/me/avatar", handlers.DeleteAvatar(hd))
 			r.Mount("/me/credentials", handlers.IdentityRouter(hd))
 			r.Mount("/me/identity-modes", handlers.IdentityModesRouter(hd))
 			r.Mount("/me/emergency-contacts", handlers.EmergencyContactsRouter(hd))
@@ -88,6 +116,8 @@ func NewRouter(d Deps) http.Handler {
 			r.Get("/feed", handlers.FeedRecent(hd))
 			r.Get("/feed/stream", handlers.FeedStream(hd))
 			r.Get("/threats", handlers.Threats(hd))
+			r.Get("/warroom/overview", handlers.WarroomOverview(hd))
+			r.Get("/warroom/voiceprint/latest", handlers.WarroomLatestVoiceprint(hd))
 
 			r.Mount("/blacklist", handlers.BlacklistRouter(hd))
 			r.Mount("/whitelist", handlers.WhitelistRouter(hd))

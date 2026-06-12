@@ -42,11 +42,12 @@ type subscriber struct {
 
 // Hub 扇出 + 滑动窗口
 type Hub struct {
-	mu     sync.RWMutex
-	subs   map[*subscriber]struct{}
-	recent []Event
-	cap    int
-	log    *slog.Logger
+	mu          sync.RWMutex
+	subs        map[*subscriber]struct{}
+	recent      []Event
+	cap         int
+	lastEventAt time.Time
+	log         *slog.Logger
 }
 
 func NewHub(log *slog.Logger) *Hub {
@@ -70,6 +71,7 @@ func (h *Hub) Publish(ev Event) {
 	if len(h.recent) > h.cap {
 		h.recent = h.recent[len(h.recent)-h.cap:]
 	}
+	h.lastEventAt = ev.Timestamp
 	targets := make([]*subscriber, 0, len(h.subs))
 	for s := range h.subs {
 		if canSee(s, ev) {
@@ -84,6 +86,13 @@ func (h *Hub) Publish(ev Event) {
 		default: // 慢订阅者直接丢
 		}
 	}
+}
+
+// Stats 返回（在线订阅者数, 窗口内缓存事件数, 最近事件时间；零值表示尚无事件）。
+func (h *Hub) Stats() (subscribers, buffered int, lastEventAt time.Time) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.subs), len(h.recent), h.lastEventAt
 }
 
 // Subscribe 订阅事件流。

@@ -68,7 +68,7 @@ func analyzeSample(d Deps) http.HandlerFunc {
 			badRequest(w, "VALIDATION_FAILED", "sample 无 transcript，无法分类")
 			return
 		}
-		hits, err := d.AI.Classify(r.Context(), s.Transcript)
+		hits, err := d.AI.Classify(r.Context(), s.Transcript, qwenOptions(r.Context(), d))
 		if err != nil {
 			d.Logger.Error("ai classify failed", "err", err, "sampleId", id)
 			upstreamErr(w, "AI_UPSTREAM_ERROR", "AI 分类服务调用失败")

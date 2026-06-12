@@ -74,14 +74,19 @@ func (r *Repo) GetSampleByID(ctx context.Context, id string) (domain.Sample, err
 
 type CreateSampleParams struct {
 	ID, CallID, Transcript, Duration, Origin, Classification, Status, AudioKey string
+	TenantID                                                                   string // 样本来源租户；空 = 全局
 }
 
 func (r *Repo) CreateSample(ctx context.Context, p CreateSampleParams) (domain.Sample, error) {
+	var tenant any = p.TenantID
+	if p.TenantID == "" {
+		tenant = nil
+	}
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO samples (id, call_id, transcript, duration, origin, classification, status, audio_key)
-		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), $7, NULLIF($8,''))
+		INSERT INTO samples (id, call_id, transcript, duration, origin, classification, status, audio_key, tenant_id)
+		VALUES ($1, NULLIF($2,''), NULLIF($3,''), NULLIF($4,''), NULLIF($5,''), NULLIF($6,''), $7, NULLIF($8,''), $9)
 		RETURNING `+sampleCols,
-		p.ID, p.CallID, p.Transcript, p.Duration, p.Origin, p.Classification, defaultStr(p.Status, "待审核"), p.AudioKey,
+		p.ID, p.CallID, p.Transcript, p.Duration, p.Origin, p.Classification, defaultStr(p.Status, "待审核"), p.AudioKey, tenant,
 	)
 	s, err := scanSample(row)
 	return s, translateErr(err)

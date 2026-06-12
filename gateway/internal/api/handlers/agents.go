@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -42,18 +41,20 @@ func getAgent(d Deps, key string) http.HandlerFunc {
 
 func putAgent(d Deps, key string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			badRequest(w, "VALIDATION_FAILED", "读取请求体失败")
+		// 契约：请求体 {"value": <json>}，只存内层 value（历史版本误存整个
+		// 信封导致 GET 双重嵌套，迁移 0013 已清洗存量数据）。
+		var req struct {
+			Value json.RawMessage `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			badRequest(w, "VALIDATION_FAILED", "请求体必须是 {\"value\": <json>}")
 			return
 		}
-		// 校验是合法 JSON
-		var probe any
-		if err := json.Unmarshal(body, &probe); err != nil {
-			badRequest(w, "VALIDATION_FAILED", "value 必须是合法 JSON")
+		if len(req.Value) == 0 || string(req.Value) == "null" {
+			badRequest(w, "VALIDATION_FAILED", "value 必填")
 			return
 		}
-		a, err := d.Repo.UpsertAgentConfig(r.Context(), key, body)
+		a, err := d.Repo.UpsertAgentConfig(r.Context(), key, req.Value)
 		if err != nil {
 			internalErr(w)
 			return

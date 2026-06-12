@@ -47,14 +47,15 @@ type loginResponse struct {
 }
 
 type publicUser struct {
-	ID       string `json:"id"`
-	TenantID string `json:"tenantId"`
-	Name     string `json:"name"`
-	Phone    string `json:"phone,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Role     string `json:"role"`
-	Status   string `json:"status"`
-	Dept     string `json:"dept,omitempty"`
+	ID        string `json:"id"`
+	TenantID  string `json:"tenantId"`
+	Name      string `json:"name"`
+	Phone     string `json:"phone,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	Dept      string `json:"dept,omitempty"`
+	HasAvatar bool   `json:"hasAvatar"`
 }
 
 func toPublicUser(u repo.UserRow) publicUser {
@@ -63,6 +64,12 @@ func toPublicUser(u repo.UserRow) publicUser {
 		Phone: u.Phone, Email: u.Email,
 		Role: u.Role, Status: u.Status, Dept: u.Dept,
 	}
+}
+
+// withAvatar 在 publicUser 上补 hasAvatar 标志（需查 user_avatars）。
+func withAvatar(p publicUser, has bool) publicUser {
+	p.HasAvatar = has
+	return p
 }
 
 func authLogin(d Deps) http.HandlerFunc {
@@ -311,7 +318,8 @@ func Me(d Deps) http.HandlerFunc {
 			internalErr(w)
 			return
 		}
-		ok(w, toPublicUser(u))
+		has, _ := d.Repo.UserHasAvatar(r.Context(), uid)
+		ok(w, withAvatar(toPublicUser(u), has))
 	}
 }
 

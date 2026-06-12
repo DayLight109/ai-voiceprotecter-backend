@@ -52,17 +52,33 @@ type IdentityCredential struct {
 	Kind       string     `json:"kind"`     // phone | id_card | passport | military | hk_mo
 	Verified   bool       `json:"verified"`
 	VerifiedAt *time.Time `json:"verifiedAt,omitempty"`
+	Masked     string     `json:"masked,omitempty"`    // 脱敏展示值（"138 ···· 4921"）
+	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+	Photos     []CredentialPhoto `json:"photos,omitempty"`
+}
+
+// CredentialPhoto 证件照片视图（identity 页直接用 dataUrl 渲染 <img>，
+// 因为带 Authorization 的 <img src> 无法实现）。
+type CredentialPhoto struct {
+	Slot      string    `json:"slot"` // face | emblem | main
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	Mime      string    `json:"mime"`
+	DataURL   string    `json:"dataUrl,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type BlacklistEntry struct {
-	ID        string    `json:"id"`
-	TenantID  *string   `json:"tenantId,omitempty"`     // NULL = 全局
-	Number    string    `json:"number"`
-	Reason    string    `json:"reason"`
-	Category  string    `json:"category"`
-	Risk      int       `json:"risk"`
-	Source    string    `json:"source"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID         string    `json:"id"`
+	TenantID   *string   `json:"tenantId,omitempty"`     // NULL = 全局
+	Number     string    `json:"number"`
+	Reason     string    `json:"reason"`
+	Category   string    `json:"category"`
+	Risk       int       `json:"risk"`
+	Source     string    `json:"source"`
+	Dispatched bool      `json:"dispatched"` // false = 举报通过自动入库、待管理员下发
+	IsGlobal   bool      `json:"isGlobal"`   // tenant_id IS NULL 的派生字段
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 type WhitelistEntry struct {

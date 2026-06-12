@@ -83,3 +83,13 @@ func (r *Repo) UpdateAdminApplicationStatus(ctx context.Context, id, status, rev
 	a, err := scanAdminApp(row)
 	return a, translateErr(err)
 }
+
+// DeletePendingAdminApplicationsByUser 撤回当前用户所有待审核申请，返回删除条数。
+func (r *Repo) DeletePendingAdminApplicationsByUser(ctx context.Context, userID string) (int64, error) {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM admin_applications WHERE user_id = $1 AND status = 'pending'`, userID)
+	if err != nil {
+		return 0, translateErr(err)
+	}
+	return tag.RowsAffected(), nil
+}

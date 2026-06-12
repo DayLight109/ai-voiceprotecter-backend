@@ -15,6 +15,7 @@ import (
 	"github.com/sentinel/gateway/internal/aiclient"
 	"github.com/sentinel/gateway/internal/config"
 	"github.com/sentinel/gateway/internal/feed"
+	"github.com/sentinel/gateway/internal/ops"
 	"github.com/sentinel/gateway/internal/repo"
 	"github.com/sentinel/gateway/internal/storage"
 	"github.com/sentinel/gateway/internal/store"
@@ -31,6 +32,7 @@ type Deps struct {
 	Store   *store.Store
 	AI      *aiclient.Client
 	Storage *storage.MinIO
+	Ops     *ops.Sampler
 }
 
 // 响应封装 ─────────────────────────────────────────────────

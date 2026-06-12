@@ -11,6 +11,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -26,6 +28,7 @@ const (
 	CtxRole
 	CtxTenantID
 	CtxJTI
+	CtxSID // 所属 refresh 会话的 jti（sessions.jti），用于精确定位"当前设备"
 )
 
 // Claims 是 JWT payload
@@ -33,14 +36,24 @@ type Claims struct {
 	UID      string `json:"uid"`
 	Role     string `json:"role"`
 	TenantID string `json:"tid"`
+	SID      string `json:"sid,omitempty"` // access 所属 refresh 会话 jti
 	jwt.RegisteredClaims
 }
+
+// TouchSession 会话活跃回调：Auth 验签成功后以 sid 调用（已节流），
+// 由 router 注入 repo.TouchSessionLastSeen。nil = 不记录。
+type TouchSession func(sid string)
+
+// touchThrottle 同一会话 60s 内只回调一次，避免每个请求都写 DB。
+const touchThrottle = time.Minute
 
 // Auth 验签 access token，把 claims 注入 context。
 //
 //	失败：401 + AUTH_TOKEN_EXPIRED / AUTH_INVALID_CREDENTIALS / AUTH_TOKEN_REVOKED。
 //	rds 用来检查 jti 黑名单（登出 / 重置密码时主动撤销）；nil 或不可用时跳过检查。
-func Auth(cfg config.JWTConfig, rds *store.Redis) func(http.Handler) http.Handler {
+//	touch 见 TouchSession。
+func Auth(cfg config.JWTConfig, rds *store.Redis, touch TouchSession) func(http.Handler) http.Handler {
+	var lastTouch sync.Map // sid → time.Time
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := bearer(r)
@@ -72,11 +85,21 @@ func Auth(cfg config.JWTConfig, rds *store.Redis) func(http.Handler) http.Handle
 				return
 			}
 
+			// 会话活跃打点（节流；旧 token 无 sid 时跳过）
+			if touch != nil && claims.SID != "" {
+				now := time.Now()
+				if v, ok := lastTouch.Load(claims.SID); !ok || now.Sub(v.(time.Time)) > touchThrottle {
+					lastTouch.Store(claims.SID, now)
+					touch(claims.SID)
+				}
+			}
+
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, CtxUserID, claims.UID)
 			ctx = context.WithValue(ctx, CtxRole, claims.Role)
 			ctx = context.WithValue(ctx, CtxTenantID, claims.TenantID)
 			ctx = context.WithValue(ctx, CtxJTI, claims.ID)
+			ctx = context.WithValue(ctx, CtxSID, claims.SID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -15,7 +15,7 @@ import (
 	"github.com/sentinel/gateway/internal/repo"
 )
 
-// BlacklistRouter CRUD + import/export
+// BlacklistRouter CRUD + import/export + dispatch
 func BlacklistRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", listBlacklist(d))
@@ -25,6 +25,8 @@ func BlacklistRouter(d Deps) http.Handler {
 	r.Route("/{id}", func(r chi.Router) {
 		r.Put("/", updateBlacklist(d))
 		r.Delete("/", deleteBlacklist(d))
+		r.With(middleware.RequireRole("family_admin", "admin", "sysadmin")).
+			Post("/dispatch", dispatchBlacklist(d))
 	})
 	return r
 }
@@ -46,6 +48,12 @@ func listBlacklist(d Deps) http.HandlerFunc {
 		tenantID, _ := r.Context().Value(middleware.CtxTenantID).(string)
 		p := parsePage(r)
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		// scope: ""（默认本租户+全局）/ tenant / global（sysadmin 总库页）
+		scope := r.URL.Query().Get("scope")
+		if scope != "" && scope != "tenant" && scope != "global" {
+			badRequest(w, "VALIDATION_FAILED", "scope 仅允许 tenant / global")
+			return
+		}
 
 		var (
 			items []any
@@ -53,12 +61,12 @@ func listBlacklist(d Deps) http.HandlerFunc {
 			err   error
 		)
 		if q != "" {
-			rows, t, e := d.Repo.SearchBlacklist(r.Context(), tenantID, q, p)
+			rows, t, e := d.Repo.SearchBlacklist(r.Context(), tenantID, scope, q, p)
 			items = toAny(rows)
 			total = t
 			err = e
 		} else {
-			rows, t, e := d.Repo.ListBlacklist(r.Context(), tenantID, p)
+			rows, t, e := d.Repo.ListBlacklist(r.Context(), tenantID, scope, p)
 			items = toAny(rows)
 			total = t
 			err = e
@@ -78,7 +86,8 @@ type blacklistInput struct {
 	Category string `json:"category"`
 	Risk     int    `json:"risk"`
 	Source   string `json:"source"`
-	Global   bool   `json:"global"` // sysadmin 可建全局
+	Global   bool   `json:"global"`   // sysadmin 可建全局
+	IsGlobal bool   `json:"isGlobal"` // 同 global（前端 sysadmin 页用的字段名）
 }
 
 func createBlacklist(d Deps) http.HandlerFunc {
@@ -99,19 +108,21 @@ func createBlacklist(d Deps) http.HandlerFunc {
 		tenantID, _ := r.Context().Value(middleware.CtxTenantID).(string)
 		role, _ := r.Context().Value(middleware.CtxRole).(string)
 		uid, _ := r.Context().Value(middleware.CtxUserID).(string)
-		if req.Global && role != "sysadmin" {
+		global := req.Global || req.IsGlobal
+		if global && role != "sysadmin" {
 			writeJSON(w, http.StatusForbidden, ErrEnvelope{Error: ErrBody{
 				Code: "RBAC_FORBIDDEN", Message: "仅 sysadmin 可创建全局黑名单",
 			}})
 			return
 		}
-		if req.Global {
+		if global {
 			tenantID = ""
 		}
 		entry, err := d.Repo.CreateBlacklist(r.Context(), repo.CreateBlacklistParams{
 			ID: "bl_" + uuid.NewString(), TenantID: tenantID,
 			Number: req.Number, Reason: req.Reason, Category: req.Category,
 			Risk: req.Risk, Source: req.Source, CreatedBy: uid,
+			Dispatched: true, // 手动创建的条目即时生效；仅举报通过自动入库的为待下发
 		})
 		if err != nil {
 			d.Logger.Error("blacklist create", "err", err)
@@ -128,6 +139,10 @@ func updateBlacklist(d Deps) http.HandlerFunc {
 		var req blacklistInput
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			badRequest(w, "VALIDATION_FAILED", "请求体无法解析")
+			return
+		}
+		if req.Risk < 0 || req.Risk > 100 {
+			badRequest(w, "VALIDATION_FAILED", "risk 须 0-100")
 			return
 		}
 		// 授权：按租户 + 角色收口，防止越权改写其它租户或全局黑名单条目。
@@ -165,27 +180,63 @@ func deleteBlacklist(d Deps) http.HandlerFunc {
 	}
 }
 
+// dispatchBlacklist 把举报通过自动入库的"待下发"条目正式生效。
+// admin / family_admin 就地本租户生效；sysadmin 下发即提升为全局。
+func dispatchBlacklist(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		tenantID, _ := r.Context().Value(middleware.CtxTenantID).(string)
+		role, _ := r.Context().Value(middleware.CtxRole).(string)
+		entry, err := d.Repo.DispatchBlacklist(r.Context(), id, tenantID, role)
+		if err != nil {
+			if errors.Is(err, repo.ErrNotFound) {
+				notFoundErr(w)
+				return
+			}
+			if errors.Is(err, repo.ErrConflict) {
+				writeJSON(w, http.StatusConflict, ErrEnvelope{Error: ErrBody{
+					Code: "BLACKLIST_DUPLICATE", Message: "全局名单已存在该号码，无需重复下发",
+				}})
+				return
+			}
+			d.Logger.Error("blacklist dispatch", "err", err)
+			internalErr(w)
+			return
+		}
+		ok(w, entry)
+	}
+}
+
 // ── CSV import / export ─────────────────────────────────────
 
 func exportBlacklist(d Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenantID, _ := r.Context().Value(middleware.CtxTenantID).(string)
-		// 拉一页 1000 条简化实现；前端如需更大量改成流式
-		rows, _, err := d.Repo.ListBlacklist(r.Context(), tenantID, repo.Page{Page: 1, PageSize: 100})
-		if err != nil {
-			internalErr(w)
-			return
-		}
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="blacklist.csv"`)
 		_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // UTF-8 BOM for Excel
 		cw := csv.NewWriter(w)
 		_ = cw.Write([]string{"号码", "类别", "风险", "原因", "来源"})
-		for _, e := range rows {
-			_ = cw.Write([]string{
-				csvSafe(e.Number), csvSafe(e.Category), strconv.Itoa(e.Risk),
-				csvSafe(e.Reason), csvSafe(e.Source),
-			})
+
+		// 分页循环拉全量（repo 单页上限 100）；上限 100k 行防御异常数据量
+		const pageSize, maxRows = 100, 100000
+		written := 0
+		for page := 1; written < maxRows; page++ {
+			rows, _, err := d.Repo.ListBlacklist(r.Context(), tenantID, "", repo.Page{Page: page, PageSize: pageSize})
+			if err != nil {
+				d.Logger.Error("blacklist export", "err", err, "page", page)
+				break // 表头已发出，无法改状态码；中断并记录
+			}
+			for _, e := range rows {
+				_ = cw.Write([]string{
+					csvSafe(e.Number), csvSafe(e.Category), strconv.Itoa(e.Risk),
+					csvSafe(e.Reason), csvSafe(e.Source),
+				})
+				written++
+			}
+			if len(rows) < pageSize {
+				break
+			}
 		}
 		cw.Flush()
 	}
@@ -221,6 +272,7 @@ func importBlacklist(d Deps) http.HandlerFunc {
 				ID: "bl_" + uuid.NewString(), TenantID: tenantID,
 				Number: req.Number, Reason: req.Reason, Category: req.Category,
 				Risk: req.Risk, Source: req.Source, CreatedBy: uid,
+				Dispatched: true,
 			})
 			if err != nil {
 				skipped++

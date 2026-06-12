@@ -139,6 +139,40 @@ func (r *Repo) UpdateUser(ctx context.Context, p UpdateUserParams) (UserRow, err
 	return u, translateErr(err)
 }
 
+// UpdateUserProfile 只更新用户可自助修改的资料字段（不动 role/status）。
+// 空串走 NULLIF 落库为 NULL；email 唯一性冲突翻成 ErrConflict。
+func (r *Repo) UpdateUserProfile(ctx context.Context, id, name, phone, email, dept string) (UserRow, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE users
+		   SET name=$2, phone=NULLIF($3,''), email=NULLIF($4,''), dept=NULLIF($5,''), updated_at=now()
+		 WHERE id=$1 RETURNING `+userColumns,
+		id, name, phone, email, dept,
+	)
+	u, err := scanUserRow(row)
+	return u, translateErr(err)
+}
+
+// SetUserPassword 改密码（已 hash）。
+func (r *Repo) SetUserPassword(ctx context.Context, id, passwordHash string) error {
+	ct, err := r.pool.Exec(ctx,
+		`UPDATE users SET password_hash=$2, updated_at=now() WHERE id=$1`, id, passwordHash)
+	if err != nil {
+		return translateErr(err)
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UserHasAvatar 当前用户是否已上传头像。
+func (r *Repo) UserHasAvatar(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM user_avatars WHERE user_id=$1)`, id).Scan(&exists)
+	return exists, translateErr(err)
+}
+
 func (r *Repo) TouchUserLogin(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, id)
 	return translateErr(err)

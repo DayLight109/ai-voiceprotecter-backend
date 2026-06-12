@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/sentinel/gateway/internal/domain"
 )
@@ -140,4 +141,47 @@ func (r *Repo) CreateCallLog(ctx context.Context, p CreateCallLogParams) (domain
 	)
 	c, err := scanCallLog(row)
 	return c, translateErr(err)
+}
+
+// LatestVoiceprintLog warroom「最近一次声纹判决」视图。
+type LatestVoiceprintLog struct {
+	ID             string
+	CreatedAt      time.Time
+	RiskScore      int
+	Verdict        string // call_logs 中文判定：拦截/预警/通过
+	VoiceprintJSON json.RawMessage
+}
+
+// GetLatestVoiceprintCallLog 取最近一条带声纹结果的通话。
+// tenantID 为空 = 不过滤（sysadmin）。无记录返回 ErrNotFound。
+func (r *Repo) GetLatestVoiceprintCallLog(ctx context.Context, tenantID string) (LatestVoiceprintLog, error) {
+	var v LatestVoiceprintLog
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, created_at, COALESCE(risk_score,0), verdict, voiceprint_json
+		FROM call_logs
+		WHERE voiceprint_json IS NOT NULL AND voiceprint_json::text <> 'null'
+		  AND ($1::text = '' OR tenant_id = $1)
+		ORDER BY created_at DESC LIMIT 1`, tenantID).
+		Scan(&v.ID, &v.CreatedAt, &v.RiskScore, &v.Verdict, &v.VoiceprintJSON)
+	return v, translateErr(err)
+}
+
+// CallLogStats 启动时回填内存计数器用的全局统计。
+type CallLogStats struct {
+	Total      int64 // 总分析次数
+	Blocked    int64 // 判定为拦截
+	AIClones   int64 // 声纹判 SYNTH
+	ScriptHits int64 // 话术层有命中
+}
+
+func (r *Repo) CountCallLogStats(ctx context.Context) (CallLogStats, error) {
+	var s CallLogStats
+	err := r.pool.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE verdict = '拦截'),
+		       COUNT(*) FILTER (WHERE voiceprint_json->>'verdict' = 'SYNTH'),
+		       COUNT(*) FILTER (WHERE jsonb_array_length(COALESCE(script_json->'hits','[]'::jsonb)) > 0)
+		FROM call_logs`).
+		Scan(&s.Total, &s.Blocked, &s.AIClones, &s.ScriptHits)
+	return s, translateErr(err)
 }

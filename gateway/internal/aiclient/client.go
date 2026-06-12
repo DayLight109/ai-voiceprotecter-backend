@@ -38,18 +38,28 @@ type AnalyzeRequest struct {
 	SignalOriginCC string  `json:"signalOriginCC"`
 	AudioSeconds   float64 `json:"audioSeconds"`
 	TranscriptHint string  `json:"transcriptHint"`
+	// LLMOptions 透传 sysadmin 在「智能体管理」页保存的千问参数
+	// （agent_config key=qwen 的 value 原样转发；AI 侧按需覆盖默认配置）。
+	LLMOptions json.RawMessage `json:"llmOptions,omitempty"`
 }
 
 type AnalyzeResponse struct {
 	CallID        string         `json:"callId"`
 	Timestamp     time.Time      `json:"ts"`
 	Trace         TraceVerdict   `json:"trace"`
-	Voiceprint    VoiceVerdict   `json:"voiceprint"`
-	Script        ScriptVerdict  `json:"script"`
+	Voiceprint    *VoiceVerdict  `json:"voiceprint"`  // 降级时为 nil
+	Script        *ScriptVerdict `json:"script"`      // 降级时为 nil
 	RiskScore     int            `json:"riskScore"`
 	RiskLevel     string         `json:"riskLevel"`
 	Action        string         `json:"action"`
 	LatencyMillis int64          `json:"latencyMillis"`
+	// 非空表示 AI 侧缺层降级判决（缺失层及原因）
+	DegradedLayers []DegradedLayer `json:"degradedLayers,omitempty"`
+}
+
+type DegradedLayer struct {
+	Layer  string `json:"layer"`
+	Reason string `json:"reason"`
 }
 
 type TraceVerdict struct {
@@ -103,10 +113,13 @@ func (c *Client) Transcribe(ctx context.Context, audioKey string) (string, error
 	return out.Text, nil
 }
 
-// Classify 调 AI /v1/classify，返回命中数组。
-func (c *Client) Classify(ctx context.Context, transcript string) ([]ScriptHit, error) {
+// Classify 调 AI /v1/classify，返回命中数组。llmOptions 可为 nil（用 AI 默认配置）。
+func (c *Client) Classify(ctx context.Context, transcript string, llmOptions json.RawMessage) ([]ScriptHit, error) {
 	var out ScriptVerdict
-	body := map[string]string{"transcript": transcript}
+	body := map[string]any{"transcript": transcript}
+	if len(llmOptions) > 0 {
+		body["llmOptions"] = llmOptions
+	}
 	if err := c.postJSON(ctx, "/v1/classify", body, &out); err != nil {
 		return nil, err
 	}

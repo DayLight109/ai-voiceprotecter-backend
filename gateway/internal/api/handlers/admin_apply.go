@@ -17,6 +17,7 @@ func AdminApplyRouter(d Deps) http.Handler {
 	r.With(middleware.RequireRole("sysadmin")).Get("/", listAdminApply(d))
 	r.Get("/status", getMyAdminApply(d))
 	r.Post("/", submitAdminApply(d))
+	r.Delete("/mine", withdrawAdminApply(d))
 	r.With(middleware.RequireRole("sysadmin")).Put("/{id}/review", reviewAdminApply(d))
 	return r
 }
@@ -72,6 +73,13 @@ func submitAdminApply(d Deps) http.HandlerFunc {
 			return
 		}
 		uid, _ := r.Context().Value(middleware.CtxUserID).(string)
+		// 已有待审核申请时拒绝重复提交（前端按 ADMIN_APPLY_PENDING 提示）
+		if latest, err := d.Repo.GetLatestAdminApplicationByUser(r.Context(), uid); err == nil && latest.Status == "pending" {
+			writeJSON(w, http.StatusConflict, ErrEnvelope{Error: ErrBody{
+				Code: "ADMIN_APPLY_PENDING", Message: "已存在审核中的申请，请等待结果或先撤回",
+			}})
+			return
+		}
 		a, err := d.Repo.CreateAdminApplication(r.Context(), repo.CreateAdminApplicationParams{
 			ID: "aa_" + uuid.NewString(), UserID: uid,
 			Scope: req.Scope, Reason: req.Reason, Contact: req.Contact,
@@ -81,6 +89,23 @@ func submitAdminApply(d Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusCreated, Envelope{Data: a})
+	}
+}
+
+// withdrawAdminApply 撤回本人待审核中的申请（已审结的不可撤回）。
+func withdrawAdminApply(d Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid, _ := r.Context().Value(middleware.CtxUserID).(string)
+		n, err := d.Repo.DeletePendingAdminApplicationsByUser(r.Context(), uid)
+		if err != nil {
+			internalErr(w)
+			return
+		}
+		if n == 0 {
+			notFoundErr(w)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

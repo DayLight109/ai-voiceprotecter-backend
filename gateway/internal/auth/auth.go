@@ -50,6 +50,7 @@ func Issue(cfg config.JWTConfig, uid, role, tenantID string) (*Tokens, error) {
 
 	access := jwt.NewWithClaims(jwt.SigningMethodHS256, &middleware.Claims{
 		UID: uid, Role: role, TenantID: tenantID,
+		SID: refreshJTI, // 关联所属 refresh 会话，用于"当前设备"定位与活跃打点
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        accessJTI,
 			ExpiresAt: jwt.NewNumericDate(accessExp),

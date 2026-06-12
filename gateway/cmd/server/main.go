@@ -24,6 +24,7 @@ import (
 	"github.com/sentinel/gateway/internal/config"
 	"github.com/sentinel/gateway/internal/db"
 	"github.com/sentinel/gateway/internal/feed"
+	"github.com/sentinel/gateway/internal/ops"
 	"github.com/sentinel/gateway/internal/repo"
 	"github.com/sentinel/gateway/internal/storage"
 	"github.com/sentinel/gateway/internal/store"
@@ -82,6 +83,21 @@ func main() {
 	// 数据访问层
 	dataRepo := repo.New(pool)
 
+	// 计数器播种：从 call_logs 重建历史口径，重启不清零
+	if stats, err := dataRepo.CountCallLogStats(bootCtx); err != nil {
+		logger.Warn("seed counters failed", "err", err)
+	} else {
+		st.Seed(stats.Total, stats.Blocked, stats.AIClones, stats.ScriptHits)
+		logger.Info("counters seeded from call_logs",
+			"total", stats.Total, "blocked", stats.Blocked,
+			"aiClones", stats.AIClones, "scriptHits", stats.ScriptHits)
+	}
+
+	// 运维指标采样器（/ops/series、/warroom/overview 数据源）：5s × 360 = 30 分钟窗口
+	sampler := ops.NewSampler(5*time.Second, 360)
+	sampler.Start()
+	defer sampler.Stop()
+
 	// ── HTTP 路由装配 ────────────────────────────────────
 	router := api.NewRouter(api.Deps{
 		Cfg:     cfg,
@@ -93,6 +109,7 @@ func main() {
 		Store:   st,
 		AI:      ai,
 		Storage: obj,
+		Ops:     sampler,
 	})
 
 	srv := &http.Server{

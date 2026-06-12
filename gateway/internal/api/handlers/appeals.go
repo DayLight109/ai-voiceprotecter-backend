@@ -102,6 +102,27 @@ func reviewAppeal(d Deps) http.HandlerFunc {
 			internalErr(w)
 			return
 		}
+
+		// 号码举报通过 → 自动生成一条"待下发"黑名单（dispatched=false），
+		// 需管理员在黑名单页手动下发后生效（与前端 toast 文案一致）。
+		// sysadmin 审批 → 全局条目；admin / family_admin 审批 → 举报人所在租户条目。
+		if req.Status == "已通过" && a.Type == "号码举报" {
+			role, _ := r.Context().Value(middleware.CtxRole).(string)
+			tenantID := a.TenantID
+			if role == "sysadmin" {
+				tenantID = "" // 全局（tenant_id NULL）
+			}
+			_, blErr := d.Repo.CreateBlacklist(r.Context(), repo.CreateBlacklistParams{
+				ID: "bl_" + uuid.NewString(), TenantID: tenantID,
+				Number: a.Number, Reason: a.Reason, Category: "其他",
+				Risk: 80, Source: "举报", CreatedBy: uid,
+				Dispatched: false,
+			})
+			// 同号码已在名单中（唯一索引冲突）不视为失败，仅记录
+			if blErr != nil && !errors.Is(blErr, repo.ErrConflict) {
+				d.Logger.Error("appeal approved but blacklist create failed", "err", blErr, "appeal", a.ID)
+			}
+		}
 		ok(w, a)
 	}
 }
