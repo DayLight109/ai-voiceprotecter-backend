@@ -1,2 +1,0 @@
-DROP TABLE IF EXISTS whitelist;
-DROP TABLE IF EXISTS blacklist;
